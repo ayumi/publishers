@@ -21,6 +21,8 @@ class PublishersController < ApplicationController
              new_auth_token)
   before_action :require_unverified_publisher,
     only: %i(email_verified
+             contact_info
+             domain_status
              update_unverified
              verification
              verification_choose_method
@@ -39,7 +41,8 @@ class PublishersController < ApplicationController
     only: %i(edit_payment_info
              generate_statement
              home
-             verification_done
+             statement
+             statement_ready
              update
              uphold_status
              uphold_verified)
@@ -51,20 +54,30 @@ class PublishersController < ApplicationController
              verification_wordpress)
 
   def create
+    if params[:email].blank?
+      return redirect_to(root_path, notice: I18n.t("publishers.missing_info_provide_email") )
+    end
+
     @publisher = Publisher.new(pending_email: params[:email])
 
-    @should_throttle = should_throttle_create?
+    @should_throttle = should_throttle_create? || params[:captcha]
     throttle_legit =
       @should_throttle ?
         verify_recaptcha(model: @publisher)
         : true
-    if throttle_legit && @publisher.save
-      PublisherMailer.verify_email(@publisher).deliver_later!
-      PublisherMailer.verify_email_internal(@publisher).deliver_later if PublisherMailer.should_send_internal_emails?
-      session[:created_publisher_id] = @publisher.id
-      redirect_to create_done_publishers_path
+
+    if throttle_legit
+      if @publisher.save
+        PublisherMailer.verify_email(@publisher).deliver_later
+        PublisherMailer.verify_email_internal(@publisher).deliver_later if PublisherMailer.should_send_internal_emails?
+        session[:created_publisher_id] = @publisher.id
+        redirect_to create_done_publishers_path
+      else
+        Rails.logger.error("Create publisher errors: #{@publisher.errors.full_messages}")
+        redirect_to(root_path, notice: I18n.t("publishers.invalid_email_value") )
+      end
     else
-      render(:new)
+      redirect_to root_path(captcha: params[:captcha])
     end
   end
 
@@ -76,7 +89,7 @@ class PublishersController < ApplicationController
   def resend_email_verify_email
     @publisher = Publisher.find(session[:created_publisher_id])
 
-    PublisherMailer.verify_email(@publisher).deliver_later!
+    PublisherMailer.verify_email(@publisher).deliver_later
     PublisherMailer.verify_email_internal(@publisher).deliver_later if PublisherMailer.should_send_internal_emails?
     session[:created_publisher_id] = @publisher.id
     session[:created_publisher_email] = @publisher.pending_email
@@ -102,8 +115,9 @@ class PublishersController < ApplicationController
     success = publisher.update(update_params)
 
     if success && update_params[:pending_email]
-      PublisherMailer.notify_email_change(publisher).deliver_later!
-      PublisherMailer.confirm_email_change(publisher).deliver_later!
+      PublisherMailer.notify_email_change(publisher).deliver_later
+      PublisherMailer.confirm_email_change(publisher).deliver_later
+      PublisherMailer.confirm_email_change_internal(publisher).deliver_later if PublisherMailer.should_send_internal_emails?
     end
 
     respond_to do |format|
@@ -119,11 +133,62 @@ class PublishersController < ApplicationController
 
   def update_unverified
     @publisher = current_publisher
+    @publisher.brave_publisher_id = nil
     success = @publisher.update(publisher_update_unverified_params)
-    if success
-      redirect_to(publisher_next_step_path(@publisher))
-    else
-      render(:email_verified)
+
+    respond_to do |format|
+      format.json {
+        if success
+          # Set the publisher's domain asynchronously when the form is submitted with xhr.
+          # The results of the domain normalization and inspection will be polled afterward.
+          if @publisher.brave_publisher_id_unnormalized
+            SetPublisherDomainJob.perform_later(publisher_id: @publisher.id)
+          end
+
+          head :no_content
+        else
+          render(json: { errors: @publisher.errors }, status: 400)
+        end
+      }
+      format.html {
+        # Set the publisher's domain synchronously when the form is submitted without xhr.
+        # The results of the domain normalization and inspection must be indicated immediately.
+        #
+        # NOTE: These requests are in danger of being long-running. However, this code path should
+        # only be reached when JS is disabled.
+        if success && @publisher.brave_publisher_id_unnormalized
+          PublisherDomainSetter.new(publisher: @publisher).perform
+          success = @publisher.save
+        end
+
+        if success
+          redirect_to(publisher_next_step_path(@publisher))
+        else
+          render(:contact_info)
+        end
+      }
+    end
+  end
+
+  def domain_status
+    publisher = current_publisher
+    respond_to do |format|
+      format.json {
+        if publisher.brave_publisher_id.present?
+          render(json: {
+            brave_publisher_id: publisher.brave_publisher_id,
+            next_step: publisher_next_step_path(publisher)
+          }, status: 200)
+        elsif publisher.brave_publisher_id_error_code.present?
+          render(json: {
+            error: I18n.t('activerecord.attributes.publisher.brave_publisher_id') +
+                   ': ' +
+                   publisher.brave_publisher_id_error_description
+          }, status: 200)
+        else
+          head 404
+        end
+      }
     end
   end
 
@@ -134,7 +199,7 @@ class PublishersController < ApplicationController
 
   def create_auth_token
     @publisher = Publisher.new(publisher_create_auth_token_params)
-    @should_throttle = should_throttle_create_auth_token?
+    @should_throttle = should_throttle_create_auth_token? || params[:captcha]
     throttle_legit =
       @should_throttle ?
         verify_recaptcha(model: @publisher)
@@ -151,7 +216,8 @@ class PublishersController < ApplicationController
     if emailer.perform
       # Success shown in view #create_auth_token
     else
-      flash.now[:alert] = emailer.error
+      # Failed to find publisher
+      flash.now[:login_link] = "" # Uses login_link partial instead of explicit message
       render(:new_auth_token)
     end
   end
@@ -188,6 +254,14 @@ class PublishersController < ApplicationController
   end
 
   def email_verified
+    if session[:taken_youtube_channel_id]
+      @taken_youtube_channel = YoutubeChannel.find(session[:taken_youtube_channel_id])
+      session[:taken_youtube_channel_id] = nil
+    end
+    @publisher = current_publisher
+  end
+
+  def contact_info
     @publisher = current_publisher
   end
 
@@ -204,7 +278,7 @@ class PublishersController < ApplicationController
     ).perform
     current_publisher.reload
     if current_publisher.verified?
-      render(:verification_done)
+      redirect_to(home_publishers_path)
     else
       render(:verification_background)
     end
@@ -214,18 +288,12 @@ class PublishersController < ApplicationController
     redirect_to(publisher_last_verification_method_path(@publisher), alert: t("shared.api_error"))
   end
 
-  # TODO: Rate limit
+  # TODO: Rate limit and perform async
   def check_for_https
     @publisher = current_publisher
-    @publisher.inspect_brave_publisher_id
+    PublisherDomainSetter.new(publisher: @publisher).perform
     @publisher.save!
     redirect_to(publisher_last_verification_method_path(@publisher), alert: t("publishers.https_inspection_complete"))
-  end
-
-  # Shown after verification is completed to encourage users to submit
-  # payment information.
-  def verification_done
-    @publisher = current_publisher
   end
 
   def uphold_verified
@@ -254,9 +322,14 @@ class PublishersController < ApplicationController
 
     @publisher.receive_uphold_code(params[:code])
 
-    ExchangeUpholdCodeForAccessTokenJob.perform_now(publisher_id: @publisher.id)
-
-    @publisher.reload
+    begin
+      ExchangeUpholdCodeForAccessTokenJob.perform_now(publisher_id: @publisher.id)
+      @publisher.reload
+    rescue Faraday::Error
+      Rails.logger.error("Unable to exchange Uphold access token with eyeshade")
+      redirect_to(publisher_next_step_path(@publisher), alert: I18n.t("publishers.verification_uphold_error"))
+      return
+    end
 
     redirect_to(publisher_next_step_path(@publisher))
   end
@@ -274,22 +347,45 @@ class PublishersController < ApplicationController
 
   # Domain verified. See balance and submit payment info.
   def home
+    # ensure the wallet has been fetched, which will check if Uphold needs to be re-authorized
+    # ToDo: rework this process?
+    current_publisher.wallet
   end
 
   def log_out
     path = after_sign_out_path_for(current_publisher)
     sign_out(current_publisher)
-    redirect_to(path, notice: I18n.t("publishers.logged_out"))
+    redirect_to(path)
   end
 
   def generate_statement
     publisher = current_publisher
     statement_period = params[:statement_period]
-    report_url = PublisherStatementGenerator.new(publisher: publisher, statement_period: statement_period.to_sym).perform
-    respond_to do |format|
-      format.json {
-        render(json: { reportURL: report_url }, status: 200)
-      }
+    statement = PublisherStatementGenerator.new(publisher: publisher, statement_period: statement_period.to_sym).perform
+    SyncPublisherStatementJob.perform_later(publisher_statement_id: statement.id)
+    render(json: {
+      id: statement.id,
+      date: statement_period_date(statement.created_at),
+      period: statement_period_description(statement.period.to_sym)
+    }, status: 200)
+  end
+
+  def statement_ready
+    statement = PublisherStatement.find(params[:id])
+    if statement && statement.contents
+      render(nothing: true, status: 204)
+    else
+      render(nothing: true, status: 404)
+    end
+  end
+
+  def statement
+    statement = PublisherStatement.find(params[:id])
+
+    if statement
+      send_data statement.contents, filename: publisher_statement_filename(statement)
+    else
+      render(nothing: true, status: 404)
     end
   end
 
@@ -298,10 +394,23 @@ class PublishersController < ApplicationController
     respond_to do |format|
       format.json {
         render(json: {
-          status: publisher_status(publisher),
+          status: publisher_status(publisher).to_s,
           status_description: publisher_status_description(publisher),
+          timeout_message: publisher_status_timeout(publisher),
           uphold_status: publisher.uphold_status.to_s,
           uphold_status_description: uphold_status_description(publisher)
+        }, status: 200)
+      }
+    end
+  end
+
+  def balance
+    publisher = current_publisher
+    respond_to do |format|
+      format.json {
+        render(json: {
+            bat_amount: publisher_humanize_balance(current_publisher, "BAT"),
+            converted_balance: publisher_converted_balance(publisher)
         }, status: 200)
       }
     end
@@ -311,39 +420,36 @@ class PublishersController < ApplicationController
 
   def authenticate_via_token
     sign_out(current_publisher) if current_publisher
-    return if params[:id].blank? || params[:token].blank?
-    publisher = Publisher.find(params[:id])
-    if PublisherTokenAuthenticator.new(publisher: publisher, token: params[:token], confirm_email: params[:confirm_email]).perform
-      if params[:confirm_email].present? && publisher.email == params[:confirm_email]
+
+    publisher_id = params[:id]
+    token = params[:token]
+    confirm_email = params[:confirm_email]
+
+    return if publisher_id.blank? || token.blank?
+
+    publisher = Publisher.find(publisher_id)
+
+    if PublisherTokenAuthenticator.new(publisher: publisher, token: token, confirm_email: confirm_email).perform
+      if confirm_email.present? && publisher.email == confirm_email
         flash[:alert] = t("publishers.email_confirmed", email: publisher.email)
       end
-      sign_in(:publisher, publisher)
+      if two_factor_enabled?(publisher)
+        session[:pending_2fa_current_publisher_id] = publisher_id
+        redirect_to two_factor_authentications_path
+      else
+        sign_in(:publisher, publisher)
+      end
     else
       flash[:alert] = I18n.t("publishers.authentication_token_invalid")
     end
   end
 
-  # Used by #create_auth_token
-  # Kinda copied from Publisher #normalize_brave_publisher_id
-  def normalize_brave_publisher_id(brave_publisher_id)
-    require "faraday"
-    PublisherDomainNormalizer.new(domain: brave_publisher_id).perform
-  rescue PublisherDomainNormalizer::DomainExclusionError
-    "#{I18n.t('activerecord.errors.models.publisher.attributes.brave_publisher_id.exclusion_list_error')} #{Rails.application.secrets[:support_email]}"
-  rescue PublisherDomainNormalizer::OfflineNormalizationError => e
-    e.message
-  rescue Faraday::Error
-    I18n.t("activerecord.errors.models.publisher.attributes.brave_publisher_id.api_error_cant_normalize")
-  rescue URI::InvalidURIError
-    I18n.t("activerecord.errors.models.publisher.attributes.brave_publisher_id.invalid_uri")
-  end
-
   def publisher_update_params
-    params.require(:publisher).permit(:pending_email, :name, :show_verification_status)
+    params.require(:publisher).permit(:pending_email, :phone, :name, :show_verification_status, :default_currency)
   end
 
   def publisher_update_unverified_params
-    params.require(:publisher).permit(:brave_publisher_id, :name, :phone, :show_verification_status)
+    params.require(:publisher).permit(:brave_publisher_id_unnormalized, :name, :phone, :show_verification_status)
   end
 
   def publisher_create_auth_token_params

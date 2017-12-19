@@ -10,11 +10,23 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 20170915124337) do
+ActiveRecord::Schema.define(version: 20171212030656) do
 
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
   enable_extension "uuid-ossp"
+
+  create_table "publisher_statements", id: :uuid, default: -> { "uuid_generate_v4()" }, force: :cascade do |t|
+    t.uuid     "publisher_id",          null: false
+    t.string   "period"
+    t.string   "source_url"
+    t.text     "encrypted_contents"
+    t.string   "encrypted_contents_iv"
+    t.datetime "expires_at"
+    t.datetime "created_at",            null: false
+    t.datetime "updated_at",            null: false
+    t.index ["publisher_id"], name: "index_publisher_statements_on_publisher_id", using: :btree
+  end
 
   create_table "publishers", id: :uuid, default: -> { "uuid_generate_v4()" }, force: :cascade do |t|
     t.string   "brave_publisher_id"
@@ -35,7 +47,7 @@ ActiveRecord::Schema.define(version: 20170915124337) do
     t.string   "encrypted_authentication_token_iv"
     t.string   "verification_method"
     t.datetime "authentication_token_expires_at"
-    t.boolean  "show_verification_status",              default: true
+    t.boolean  "show_verification_status"
     t.boolean  "created_via_api",                       default: false, null: false
     t.string   "uphold_state_token"
     t.string   "encrypted_uphold_code"
@@ -47,10 +59,43 @@ ActiveRecord::Schema.define(version: 20170915124337) do
     t.boolean  "supports_https",                        default: false
     t.boolean  "host_connection_verified"
     t.string   "detected_web_host"
+    t.string   "default_currency"
+    t.string   "auth_provider"
+    t.string   "auth_user_id"
+    t.string   "auth_name"
+    t.string   "auth_email"
+    t.string   "youtube_channel_id"
+    t.string   "brave_publisher_id_unnormalized"
+    t.string   "brave_publisher_id_error_code"
+    t.datetime "uphold_updated_at"
     t.index ["brave_publisher_id"], name: "index_publishers_on_brave_publisher_id", using: :btree
     t.index ["created_at"], name: "index_publishers_on_created_at", using: :btree
     t.index ["verification_token"], name: "index_publishers_on_verification_token", using: :btree
     t.index ["verified"], name: "index_publishers_on_verified", using: :btree
+    t.index ["youtube_channel_id"], name: "index_publishers_on_youtube_channel_id", using: :btree
+  end
+
+  create_table "totp_registrations", id: :uuid, default: -> { "uuid_generate_v4()" }, force: :cascade do |t|
+    t.string   "encrypted_secret"
+    t.string   "encrypted_secret_iv"
+    t.uuid     "publisher_id"
+    t.datetime "last_logged_in_at"
+    t.datetime "created_at",          null: false
+    t.datetime "updated_at",          null: false
+    t.index ["publisher_id"], name: "index_totp_registrations_on_publisher_id", using: :btree
+  end
+
+  create_table "u2f_registrations", id: :uuid, default: -> { "uuid_generate_v4()" }, force: :cascade do |t|
+    t.text     "certificate"
+    t.string   "key_handle"
+    t.string   "public_key"
+    t.integer  "counter",      null: false
+    t.string   "name"
+    t.uuid     "publisher_id"
+    t.datetime "created_at",   null: false
+    t.datetime "updated_at",   null: false
+    t.index ["key_handle"], name: "index_u2f_registrations_on_key_handle", using: :btree
+    t.index ["publisher_id"], name: "index_u2f_registrations_on_publisher_id", using: :btree
   end
 
   create_table "versions", force: :cascade do |t|
@@ -61,6 +106,16 @@ ActiveRecord::Schema.define(version: 20170915124337) do
     t.text     "object"
     t.datetime "created_at"
     t.index ["item_type", "item_id"], name: "index_versions_on_item_type_and_item_id", using: :btree
+  end
+
+  create_table "youtube_channels", id: :string, force: :cascade do |t|
+    t.string   "title"
+    t.string   "description"
+    t.string   "thumbnail_url"
+    t.integer  "subscriber_count"
+    t.datetime "created_at",       null: false
+    t.datetime "updated_at",       null: false
+    t.index ["id"], name: "index_youtube_channels_on_id", unique: true, using: :btree
   end
 
 end

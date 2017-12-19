@@ -7,8 +7,6 @@ gem "active_model_serializers", "~> 0.10.0"
 # Encrypt DB data at rest
 gem "attr_encrypted", "~> 3.0.0"
 
-gem "aws-sdk", "~> 2", require: false
-
 gem "bootstrap-sass", "~> 3.3.6"
 
 # Authentication
@@ -25,6 +23,9 @@ gem "lograge", "~> 0.4"
 # Dependency for rails
 gem "nokogiri", "~> 1.8.1"
 
+# Oauth client for google / youtube
+gem "omniauth-google-oauth2", "~> 0.5.2"
+
 # Model record auditing
 gem "paper_trail", "~> 5.2.2"
 
@@ -38,12 +39,17 @@ gem "phony_rails", "~> 0.14"
 gem "premailer-rails", "~> 1.9.4", require: false
 
 # Puma as app server
-gem "puma", "~> 3.0"
+gem "puma", "~> 3.11"
 
 gem "rails", "~> 5.0.0", ">= 5.0.0.1"
 
 # Cache with Redis
 gem "redis-rails", "~> 5"
+
+gem "redis-store", "~> 1.4.0"
+
+# Generate QR codes for TOTP 2fa
+gem "rqrcode", "~> 0.10"
 
 # SCSS for stylesheets
 gem "sass-rails", "~> 5.0"
@@ -59,11 +65,20 @@ gem "sidekiq-scheduler", "~> 2.0"
 # slim for view templates
 gem "slim-rails", "~> 3.1"
 
+# U2F for 2-factor auth
+gem "u2f", "~> 1.0"
+
 # Uglifier as compressor for JavaScript assets
 gem "uglifier", ">= 1.3.0"
 
+# Rails UJS without jQuery
+gem "vanilla-ujs", "~>1.3"
+
 # clipboard.js for rails
 gem "clipboard-rails"
+
+# One-time passwords for 2fa
+gem "rotp", "~> 3.3"
 
 group :development, :test do
   # Call "byebug" anywhere in the code to stop execution and get a debugger console
@@ -88,6 +103,9 @@ group :development do
   gem "rubocop", require: false
   # gem "spring"
   # gem "spring-watcher-listen", "~> 2.0.0"
+
+  # i18n-tasks helps you find and manage missing and unused translations.
+  gem 'i18n-tasks', '~> 0.9.12'
 end
 
 group :test do
@@ -105,6 +123,10 @@ end
 group :development, :test do
   # Sweet REPL. To use, drop in "binding.pry" anywhere in code.
   gem "pry"
+  gem "mocha"
+  gem "minitest-rails-capybara"
+  gem "capybara-selenium"
+  gem "chromedriver-helper"
 end
 
 group :production, :staging do
@@ -118,4 +140,4 @@ end
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
 gem "tzinfo-data", platforms: [:mingw, :mswin, :x64_mingw, :jruby]
 
-ruby "2.3.3"
+ruby "2.3.6"

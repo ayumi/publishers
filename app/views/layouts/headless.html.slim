@@ -1,7 +1,7 @@
 doctype html
 html
-  head
-    title Brave Publishers
+  head data-piwik-host=Rails.application.secrets[:piwik_host]
+    title= t("publishers.app_title")
     = csrf_meta_tags
     = stylesheet_link_tag('application', media: 'all')
     = javascript_include_tag('application')
@@ -14,5 +14,5 @@ html
           div.alert.alert-warning= flash[:alert]
         - if flash[:notice]
           div.alert.alert-info= flash[:notice]
-            
+
     = content_for?(:content) ? yield(:content) : yield

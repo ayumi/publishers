@@ -15,6 +15,7 @@ export API_LEDGER_OFFLINE=1
 #export BASIC_AUTH_USER="" # Enable HTTP basic auth for the whole app.
 #export BASIC_AUTH_PASSWORD="" # see above
 export INTERNAL_EMAIL="admin@publishers.local" # Admin notifications get sent here.
+#export LOG_API_REQUESTS=1 # Enable to log publishers' external API access.
 #export MAILER_SENDER="" # The From: header in emails sent to users.
 export RECAPTCHA_PUBLIC_KEY="" # For recaptcha for rate limiting.
 export RECAPTCHA_PRIVATE_KEY=""
@@ -28,3 +29,10 @@ export UPHOLD_CLIENT_SECRET="" # Client secret for registered Uphold application
 export UPHOLD_AUTHORIZATION_ENDPOINT="https://sandbox.uphold.com/authorize/<UPHOLD_CLIENT_ID>?scope=<UPHOLD_SCOPE>&intention=signup&state=<STATE>"
 export UPHOLD_API_URI="https://api-sandbox.uphold.com" # the API endpoint for Uphold.
 export UPHOLD_SCOPE="cards:read,cards:write,user:read"
+export UPHOLD_DASHBOARD_URL="https://sandbox.uphold.com/dashboard"
+export TERMS_OF_SERVICE_URL="https://basicattentiontoken.org/publisher-terms-of-service/"
+
+# Get these from the Google Web application setup. During setup:
+# - make sure the authorized redirect url goes to the endpoint /publishers/auth/google_oauth2/callback
+export GOOGLE_CLIENT_ID=""
+export GOOGLE_CLIENT_SECRET=""

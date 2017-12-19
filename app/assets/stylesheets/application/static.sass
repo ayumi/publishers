@@ -1,10 +1,10 @@
 body[data-controller="static"]
-  padding-top: $navbar-margin-bottom
-  height: 100vh
+  padding-top: 0
+  min-height: 100vh
 
   background-color: #f33a46
-  background-image: url(asset-path("coins.png")) /* fallback */
-  background-image: url(asset-path("coins.png")), -webkit-linear-gradient(-72deg,#f7383a,#e72d5d,#C09 85%)
+  background-image: url(asset-path("landing-bgd.png")) /* fallback */
+  background-image: url(asset-path("landing-bgd.png")), -webkit-linear-gradient(-72deg,#f7383a,#e72d5d,#C09 85%)
   background-repeat: no-repeat
   background-position: top right
 
@@ -17,23 +17,48 @@ body[data-controller="static"]
     padding-bottom: 15px
     color: white
     font-size: 16px
-    font-weight: 300
-    letter-spacing: 0.02em
+    font-weight: 400
+    letter-spacing: -0.013em
+    line-height: 28px
+    margin-bottom: 21px
+    &.leadin
+      font-size: 22px
+      font-weight: 100
+      line-height: 32px
+      letter-spacing: -0.02em
+      strong
+        font-weight: 600
 
   .logo
-    margin-top: 20px
+    margin-top: 75px
+    margin-bottom: 75px
+
+  @media (max-width: $screen-md-max)
+    p.leadin
+      font-size: 20px
+    .logo
+      margin-top: 55px
+      margin-bottom: 20px
 
   .main-heading
     h2
-      font-weight: 200
+      font-weight: 100
       font-size: 32px
       margin-bottom: 0px
-    h1
-      font-weight: 700
-      font-size: 52px
-      margin-top: 10px
-      margin-bottom: 40px
-      margin-right: -30px
+    @media (max-width: $screen-md-max)
+      h1
+        font-weight: 600
+        font-size: 36px
+        margin-top: 5px
+        margin-bottom: 30px
+      h2
+        font-size: 24px
+    @media (min-width: $screen-md-min)
+      h1
+        font-weight: 600
+        font-size: 48px
+        margin-top: 10px
+        margin-bottom: 50px
 
   .section-header
     margin-top: 0px
@@ -42,20 +67,20 @@ body[data-controller="static"]
     color: white
 
   .alt-path-copy
-    color: rgba(white, 0.85)
+    color: rgba(white, 0.50)
     font-size: 15px
     font-weight: 200
     letter-spacing: 0.02em
+    padding-bottom: 0
+    margin-bottom: 0
+    @media (max-width: $screen-xs-max)
+      padding-bottom: 15px
     strong
       color: white
-      font-weight: 600
-
-  .dashboard
-    margin-top: 35px
-    margin-bottom: 35px
+      font-weight: 500
 
   .divider
-    border-color: rgba(#ededee, 0.35)
+    border-color: rgba(#222326, 0.25)
     margin-top: 40px
     height: 1px
     width: 100%
@@ -64,46 +89,82 @@ body[data-controller="static"]
   .welcome
     margin-top: 25px
 
-  @media (max-width: 767px)
-    .col-centered
-      float: none
-      margin: 0 auto
-      padding-left: 30px
-      padding-right: 30px
+  .signup-panel
+    margin-top: 25px
+    background: rgba(#222326, 0.2)
+    border-radius: 8px
+    padding: 60px 40px 35px 40px
+    @media (max-width: $screen-xs-max)
+      padding: 40px 30px 35px 30px
 
-  @media (max-width: 991px)
+    .form-group
+      margin-top: 40px
+      @media (max-width: $screen-xs-max)
+        margin-top: 20px
+    hr
+      margin-top: 70px
+      margin-bottom: 30px
+      @media (max-width: $screen-xs-max)
+        margin-top: 35px
+
+  .terms-of-service
+    margin: 20px 0 150px 0
+    a
+      color: rgba(#ededee, 0.65)
+      font-size: 14px
+      font-weight: 300
+
+  @media (max-width: $screen-sm-max)
     .col-centered
       float: none
       margin: 0 auto
       padding-left: 40px
       padding-right: 40px
+    .dashboard
+      margin-top: 0px
+      margin-bottom: 10px
 
-  @media (min-width: 992px)
-    .col-left
-      padding-left: 70px
-      padding-right: 30px
-    .col-right
-      padding-left: 30px
-      padding-right: 70px
+  @media (max-width: $screen-xxs-max)
+    .logo
+      margin-top: 35px
+      margin-bottom: 0px
+    .col-centered
+      float: none
+      margin: 0 auto
+      padding-left: 20px
+      padding-right: 20px
 
-  @media (min-width: 1200px)
+
+  @media (min-width: $screen-md-min)
     .col-left
-      padding-left: 120px
-      padding-right: 30px
+      padding-left: 60px
+      padding-right: 20px
     .col-right
-      padding-left: 30px
-      padding-right: 120px
+      padding-left: 20px
+      padding-right: 60px
+    .dashboard
+      margin-top: 10px
+      margin-bottom: 35px
+
+  @media (min-width: $screen-lg-min)
+    .col-left
+      padding-left: 80px
+      padding-right: 20px
+    .col-right
+      padding-left: 20px
+      padding-right: 80px
 
   .form-control
-    background-color: rgba(white, 0.22)
-    color: rgba(white, 0.88)
-    height: 48px
+    background-color: rgba(#FF5874, 0.3)
+    color: rgba(white, 0.7)
+    height: 47px
     font-weight: 400
     font-size: 16px
     border: none
     border-radius: 3px
     opacity: 0.88
     letter-spacing: 0.02em
+    box-shadow: none
 
   input[type="email"]:focus
     border: 1px solid #ff5396
@@ -113,23 +174,27 @@ body[data-controller="static"]
   .form-control::-webkit-input-placeholder
     font-weight: 300
     font-size: 16px
-    color: white
+    color: #F196B3
   .control-label
     display: inline
     color: white
   .button-column
     padding-left: 0px
+    @media (max-width: $screen-xs-max)
+      &.col-xs-12
+        padding-left: 15px
   .btn
     &.btn-primary
-      background: #f93f32
-      height: 50px
+      background: #72008B
+      height: 48px
       border: none
-      border-radius: 6px
-      box-shadow: 2px 2px 100px rgba(255, 255, 255, 0.5)
+      border-radius: 24px
       color: white
-      font-size: 16px
-      font-weight: 600
-      letter-spacing: 0.02em
+      font-size: 12px
+      font-weight: 500
+      letter-spacing: 0.08em
+      box-shadow: none
+      text-transform: uppercase
 
       &:hover
         background: #fc624e
@@ -138,17 +203,21 @@ body[data-controller="static"]
 
     &.btn-secondary
       background: transparent
-      height: 36px
+      height: 40px
       border: 1px solid rgba(#fff, 0.30)
-      border-radius: 6px
+      border-radius: 20px
       color: white
-      font-size: 12px
-      font-weight: 400
-      letter-spacing: 0.02em
+      font-size: 11px
+      font-weight: 500
+      letter-spacing: 0.08em
       box-shadow: none
+      margin-top: 4px
+      padding-top: 11px
+      padding-bottom: 7px
+      text-transform: uppercase
 
       &:hover
-        border: none
+        border-color: transparent
         background: rgba(#fff, 0.30)
       &:active
         border: none

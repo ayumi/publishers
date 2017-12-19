@@ -12,6 +12,9 @@
 //
 //= require fetch
 //= require clipboard
+//= require classie
+//= require u2f-api
+//= require vanilla-ujs
 //= require_tree .
 
 window.onload = function () {

@@ -1,24 +1,39 @@
 doctype html
 html
-  head
-    title Brave Publishers
+  head data-piwik-host=Rails.application.secrets[:piwik_host]
     = csrf_meta_tags
+    meta charset="utf-8"
+    meta http-equiv="X-UA-Compatible" content="IE=edge"
+    meta name="viewport" content=("width=device-width, initial-scale=#{if local_assigns[:viewport_initial_scale] then viewport_initial_scale else '0.6' end}")
+    title= t("publishers.app_title")
     = stylesheet_link_tag('application', media: 'all')
     = javascript_include_tag('application')
     link rel="icon" type="image/png" href=image_path("favicon.ico")
 
   body data-action=params[:action] data-controller=params[:controller]
-    = render("nav")
-    
-    .notifications.navbar-static-top
-      - if flash[:alert]
-        .alert.alert-warning.flash= flash[:alert]
-      - if flash[:notice]
-        .alert.alert-success.flash= flash[:notice]
-      - if content_for(:content_form_errors)
-        .alert.alert-warning= I18n.t("activerecord.shared.errors")
-        = yield(:content_form_errors)
-            
-    = content_for?(:content) ? yield(:content) : yield
+    javascript:
+      // The script tag here runs after the body element has been created
+      // on the DOM but before layout/paint. This allows us to set the class
+      // before layout/paint and avoid a flash of content before the
+      // detection has run.
+      if (window.u2f) {
+        document.body.classList.add('js-feature-available-u2f');
+      }
 
-    = render("footer")
+    #main
+      = render("nav")
+
+      .notifications.navbar-static-top#flash
+        - if flash[:alert]
+          .alert.alert-warning.flash= flash[:alert]
+        - if flash[:login_link]
+          = render partial: "publishers/login_link"
+        - if flash[:notice]
+          .alert.alert-success.flash= flash[:notice]
+        - if content_for(:content_form_errors)
+          .alert.alert-warning= I18n.t("activerecord.shared.errors")
+          = yield(:content_form_errors)
+
+      = content_for?(:content) ? yield(:content) : yield
+
+      = render("footer")

@@ -11,19 +11,47 @@ class PublisherStatementGenerator < BaseApiClient
   def perform
     return perform_offline if Rails.application.secrets[:api_eyeshade_offline]
 
-    # This raises when response is not 2xx.
     response = connection.get do |request|
-      request.headers["Authorization"] = api_authorization_header
-      request.url("/v1/publishers/#{publisher.brave_publisher_id}/statement#{query_params}")
+      if publisher.publication_type == :site
+        request.headers["Authorization"] = api_authorization_header
+        request.url("/v1/publishers/#{publisher.brave_publisher_id}/statement#{query_params}")
+      elsif publisher.publication_type == :youtube_channel
+        request.headers["Authorization"] = api_authorization_header
+        request.url("/v1/owners/#{URI.escape(publisher.owner_identifier)}/statement#{query_params}")
+      else
+        begin
+          raise "PublisherStatementGenerator can't generate statement for publication_type #{publisher.publication_type.to_s}"
+        rescue => e
+          require "sentry-raven"
+          Raven.capture_exception(e)
+        end
+        return nil
+      end
     end
 
-    return JSON.parse(response.body)["reportURL"]
+    statement = PublisherStatement.new(
+      publisher: @publisher,
+      period: @statement_period,
+      source_url: JSON.parse(response.body)["reportURL"])
+
+    statement.save!
+
+    return statement
   end
 
   def perform_offline
-    fake_report = "/publishers/home#{query_params}"
+    fake_report = "/assets/fake_statement.pdf#{query_params}"
+
     Rails.logger.info("PublisherStatementGenerator eyeshade offline; generating fake report: #{fake_report}")
-    fake_report
+
+    statement = PublisherStatement.new(
+      publisher: @publisher,
+      period: @statement_period,
+      source_url: fake_report)
+
+    statement.save!
+
+    return statement
   end
 
   def query_params

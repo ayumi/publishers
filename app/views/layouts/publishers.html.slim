@@ -1,4 +1,10 @@
 - content_for(:content) do
-  #content.container
-    = yield
-= render(template: "layouts/application")
+  .main-content
+    #content.container
+      = yield
+
+= render \
+  template: "layouts/application",
+  locals: { \
+    viewport_initial_scale: (%w(new_auth_token create_auth_token).include?(action_name) && "1.0") \
+  }

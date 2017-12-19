@@ -16,18 +16,40 @@ module PublishersHelper
     end
   end
 
+  def uphold_last_deposit_date(publisher)
+    "September 31st, 2022 (ToDo)"
+  end
+
   def show_uphold_connect?(publisher)
     publisher.uphold_status == :unconnected || publisher.uphold_status == :code_acquired
+  end
+
+  def show_uphold_dashboard?(publisher)
+    publisher.uphold_verified?
   end
 
   def poll_uphold_status?(publisher)
     publisher.uphold_status == :access_parameters_acquired
   end
 
-  # balance: Instance of Eyeshade::Balance
-  def publisher_humanize_balance(publisher)
-    if balance = publisher.balance
-      "#{'%.2f' % balance.BAT} BAT (#{'%.2f' % balance.convert_to('USD')} USD)"
+  def publisher_humanize_balance(publisher, currency)
+    if balance = publisher.wallet.contribution_balance
+      '%.2f' % balance.convert_to(currency)
+    else
+      I18n.t("publishers.balance_error")
+    end
+  rescue => e
+    require "sentry-raven"
+    Raven.capture_exception(e)
+    I18n.t("publishers.balance_error")
+  end
+
+  def publisher_converted_balance(publisher)
+    currency = publisher_default_currency(publisher)
+    return if currency == "BAT"
+    if balance = publisher.wallet.contribution_balance
+      converted_amount = '%.2f' % balance.convert_to(currency)
+      I18n.t("publishers.balance_pending_approximate", amount: converted_amount, code: currency)
     else
       I18n.t("publishers.balance_error")
     end
@@ -55,11 +77,41 @@ module PublishersHelper
         .gsub('<STATE>', publisher.uphold_state_token.to_s)
   end
 
-  def publisher_humanize_verified(publisher)
-    if publisher.verified?
-      I18n.t("publishers.verified")
+  def uphold_authorization_description(publisher)
+    if publisher_status(publisher) == :uphold_reauthorize
+      t("publishers.reconnect_to_uphold")
     else
-      I18n.t("publishers.not_verified")
+      t("publishers.create_uphold_wallet")
+    end
+  end
+
+  def uphold_dashboard_url
+    Rails.application.secrets[:uphold_dashboard_url]
+  end
+
+  def terms_of_service_url
+    Rails.application.secrets[:terms_of_service_url]
+  end
+
+  def publisher_default_currency(publisher)
+    publisher.default_currency.present? ? publisher.default_currency : 'BAT'
+  end
+
+  def publisher_available_currencies(publisher)
+    available_currencies = publisher.wallet.try(:wallet_details).try(:[], 'availableCurrencies')
+    available_currencies.blank? ? ['BAT'] : available_currencies
+  end
+
+  def publisher_verification_status(publisher)
+    publisher.verified? ? :verified : :unverified
+  end
+
+  def publisher_verification_status_description(publisher)
+    case publisher_verification_status(publisher)
+      when :verified
+        t("publishers.verified")
+      when :unverified
+        t("publishers.not_verified")
     end
   end
 
@@ -75,28 +127,44 @@ module PublishersHelper
     PublisherVerificationFileGenerator.new(publisher: publisher).generate_url
   end
 
+  # Overall publisher status combining verification and uphold wallet connection
   def publisher_status(publisher)
     if publisher.verified?
-      if publisher.uphold_complete?
+      if publisher.uphold_verified?
         :complete
-      elsif publisher.uphold_status == :code_acquired
+      elsif publisher.uphold_status == :code_acquired || publisher.uphold_status == :access_parameters_acquired
         :uphold_processing
       else
-        :uphold_unconnected
+        if publisher.wallet.try(:status).try(:[], 'action') == 're-authorize'
+          :uphold_reauthorize
+        else
+          :uphold_unconnected
+        end
       end
     else
       :unverified
     end
   end
 
+  def publisher_status_timeout(publisher)
+    case publisher_status(publisher)
+    when :uphold_processing
+      t("publishers.status_uphold_processing_timeout")
+    else
+      nil
+    end
+  end
+
   def publisher_status_description(publisher)
     case publisher_status(publisher)
     when :complete
-      t("publishers.status_complete")
+      t("publishers.dashboard_uphold_balance_sending")
     when :uphold_processing
       t("publishers.status_uphold_processing")
+    when :uphold_reauthorize
+      t("publishers.verified_publisher_reconnect_to_uphold")
     when :uphold_unconnected
-      t("publishers.status_uphold_unconnected")
+      t("publishers.verified_publisher_connect_to_uphold")
     when :unverified
       t("publishers.status_unverified")
     end
@@ -148,16 +216,48 @@ module PublishersHelper
     PublisherDnsRecordGenerator.new(publisher: publisher).perform
   end
 
-  def publisher_statement_periods
-    [
-      [t('publisher_statement_periods.past_7_days'), :past_7_days],
-      [t('publisher_statement_periods.past_30_days'), :past_30_days],
-      [t('publisher_statement_periods.this_month'), :this_month],
-      [t('publisher_statement_periods.last_month'), :last_month],
-      [t('publisher_statement_periods.this_year'), :this_year],
-      [t('publisher_statement_periods.last_year'), :last_year],
-      [t('publisher_statement_periods.all'), :all]
-    ]
+  def all_statement_periods
+    [:past_7_days,
+     :past_30_days,
+     :this_month,
+     :last_month,
+     :this_year,
+     :last_year,
+     :all]
+  end
+
+  def unused_statement_periods
+    periods = all_statement_periods
+    current_publisher.statements.each do |s|
+      periods.delete(s.period.to_sym)
+    end
+    periods
+  end
+
+  def statement_periods_as_options(periods)
+    periods.collect do |period|
+      [statement_period_description(period), period]
+    end
+  end
+
+  def statement_period_description(period)
+    t("publisher_statement_periods.#{period}")
+  end
+
+  def statement_period_date(date)
+    date.strftime('%B %e, %Y')
+  end
+
+  def publisher_statement_filename(publisher_statement)
+    publisher_id = publisher_statement.publisher.brave_publisher_id
+    date = publisher_statement.created_at.to_date.iso8601
+    period = publisher_statement.period.to_s.gsub('_', '-')
+
+    "#{publisher_id}-#{date}-#{period}.csv"
+  end
+
+  def link_to_publisher_statement(publisher_statement)
+    link_to(publisher_statement_filename(publisher_statement), statement_publishers_url(id: publisher_statement.id))
   end
 
   def publisher_filtered_verification_token(publisher)
@@ -176,5 +276,23 @@ module PublishersHelper
       # ToDo: Do we want to display a fake token? Will show up in disabled forms
       ""
     end
+  end
+
+  def name_from_email(email)
+    return "Publisher" unless email.is_a?(String)
+
+    email.split("@")[0].try(:capitalize)
+  end
+
+  def two_factor_enabled?(publisher)
+    totp_enabled?(publisher) || u2f_enabled?(publisher)
+  end
+
+  def totp_enabled?(publisher)
+    publisher.totp_registration.present?
+  end
+
+  def u2f_enabled?(publisher)
+    publisher.u2f_registrations.any?
   end
 end

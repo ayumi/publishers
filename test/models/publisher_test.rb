@@ -1,9 +1,24 @@
 require "test_helper"
 require "shared/mailer_test_helper"
+require "webmock/minitest"
 
 class PublisherTest < ActiveSupport::TestCase
   include ActionMailer::TestHelper
   include MailerTestHelper
+
+  test "publication_title is the site domain for site publishers" do
+    publisher = publishers(:verified)
+    assert_equal 'verified.org', publisher.brave_publisher_id
+    assert_equal 'verified.org', publisher.publication_title
+    assert_equal 'verified.org', publisher.to_s
+  end
+
+  test "publication_title is the youtube channel title for youtube creators" do
+    publisher = publishers(:youtube_new)
+    assert_equal 'The DIY Channel', publisher.youtube_channel.title
+    assert_equal 'The DIY Channel', publisher.publication_title
+    assert_equal 'The DIY Channel', publisher.to_s
+  end
 
   test "uphold_code is only valid without uphold_access_parameters and before uphold_verified" do
     publisher = publishers(:verified)
@@ -102,5 +117,238 @@ class PublisherTest < ActiveSupport::TestCase
     publisher.uphold_verified = true
     assert publisher.valid?
     assert_equal :verified, publisher.uphold_status
+  end
+
+  test "when wallet is gotten the default currency will be initialized if not already set" do
+    publisher = publishers(:verified)
+
+    assert_nil publisher.default_currency
+    publisher.wallet
+    refute_nil publisher.default_currency
+  end
+
+  test "when wallet is gotten uphold_verified will be reset if the wallet status directs it" do
+    prev_offline = Rails.application.secrets[:api_eyeshade_offline]
+    begin
+      Rails.application.secrets[:api_eyeshade_offline] = false
+      
+      body = "{ \"status\":{ \"provider\":\"uphold\", \"action\":\"re-authorize\" }, \"contributions\":{ \"amount\":\"9001.00\", \"currency\":\"USD\", \"altcurrency\":\"BAT\", \"probi\":\"38077497398351695427000\" }, \"rates\":{ \"BTC\":0.00005418424016883016, \"ETH\":0.000795331082073117, \"USD\":0.2363863335301452, \"EUR\":0.20187818378874756, \"GBP\":0.1799810085548496 }, \"wallet\":{ \"provider\":\"uphold\", \"authorized\":true, \"preferredCurrency\":\"USD\", \"availableCurrencies\":[ \"USD\", \"EUR\", \"BTC\", \"ETH\", \"BAT\" ] } }"
+
+      stub_request(:get, /v2\/publishers\/uphold_connected.org\/wallet/).
+          with(headers: {'Accept'=>'*/*', 'Accept-Encoding'=>'gzip;q=1.0,deflate;q=0.6,identity;q=0.3', 'User-Agent'=>'Faraday v0.9.2'}).
+          to_return(status: 200, body: body, headers: {})
+
+      publisher = publishers(:uphold_connected)
+      assert publisher.uphold_verified
+
+      publisher.wallet
+      refute publisher.uphold_verified
+
+    ensure
+      Rails.application.secrets[:api_eyeshade_offline] = prev_offline
+    end
+  end
+
+  test "a publisher cannot be associated with both a site and auth credentials" do
+    publisher = publishers(:verified)
+    assert publisher.valid?
+
+    publisher.auth_user_id = '123'
+    refute publisher.valid?
+
+    publisher.brave_publisher_id = nil
+    assert publisher.valid?
+
+    publisher.auth_user_id = nil
+    publisher.brave_publisher_id = 'example.com'
+    assert publisher.valid?
+  end
+
+  test "a publisher cannot change youtube channels" do
+    publisher = publishers(:youtube_initial)
+    assert publisher.valid?
+
+    some_channel = youtube_channels(:some_channel)
+    publisher.youtube_channel = some_channel
+    assert publisher.valid?
+
+    publisher.save
+
+    some_other_channel = youtube_channels(:some_other_channel)
+    publisher.youtube_channel = some_other_channel
+    refute publisher.valid?
+  end
+
+  test "a publisher cannot have the same youtube channel as another publisher" do
+    publisher = publishers(:youtube_initial)
+    assert publisher.valid?
+
+    diy_channel = youtube_channels(:diy_channel)
+    publisher.youtube_channel = diy_channel
+    refute publisher.valid?
+  end
+
+  test "a publisher must have a valid pending email address if it does not have an email address" do
+    publisher = Publisher.new
+
+    assert_nil publisher.email
+    assert_nil publisher.pending_email
+    refute publisher.valid?
+
+    publisher.pending_email = "foo@bar.com"
+    assert publisher.valid?
+
+    publisher.email = "foo@bar.com"
+    publisher.pending_email = nil
+    assert publisher.valid?
+
+    publisher.email = "foo@bar.com"
+    publisher.pending_email = "bar@bar.com"
+    assert publisher.valid?
+  end
+
+  test "a publisher pending_email address must be valid" do
+    publisher = Publisher.new
+
+    publisher.pending_email = "bad_email_addresscom"
+    refute publisher.valid?
+  end
+
+  test "a publisher can be destroyed if it is not verified" do
+    publisher = Publisher.new
+
+    publisher.pending_email = "foo@foo.com"
+    assert publisher.valid?
+    publisher.save
+    assert_difference("Publisher.count", -1) do
+      assert publisher.destroy
+    end
+  end
+
+  test "a publisher can not be destroyed if it is verified" do
+    publisher = publishers(:verified)
+    assert_difference("Publisher.count", 0) do
+      refute publisher.destroy
+    end
+  end
+
+  test "a publisher assigned a brave_publisher_id_error_code and brave_publisher_id will not be valid" do
+    publisher = Publisher.new
+
+    publisher.pending_email = "foo@bar.com"
+    assert publisher.valid?
+
+    publisher.email = "foo@bar.com"
+    publisher.name = 'Joe Blow'
+    publisher.brave_publisher_id = 'asdf asdf'
+    publisher.brave_publisher_id_error_code = :invalid_uri
+
+    refute publisher.valid?
+    assert_equal [:brave_publisher_id], publisher.errors.keys
+    assert_equal "invalid_uri", publisher.brave_publisher_id_error_code
+    assert_equal I18n.t("activerecord.errors.models.publisher.attributes.brave_publisher_id.invalid_uri"), publisher.brave_publisher_id_error_description
+  end
+
+  test "a publisher assigned a brave_publisher_id_error_code and brave_publisher_id_unnormalized will not be valid" do
+    publisher = Publisher.new
+
+    publisher.pending_email = "foo@bar.com"
+    publisher.brave_publisher_id_unnormalized = 'asdf asdf'
+    assert publisher.save
+
+    publisher.brave_publisher_id_error_code = :invalid_uri
+
+    refute publisher.valid?
+    assert_equal [:brave_publisher_id_unnormalized], publisher.errors.keys
+    assert_equal "invalid_uri", publisher.brave_publisher_id_error_code
+    assert_equal I18n.t("activerecord.errors.models.publisher.attributes.brave_publisher_id.invalid_uri"), publisher.brave_publisher_id_error_description
+  end
+
+  test "test `has_stale_uphold_code` scopes to correct publishers" do
+    publisher = publishers(:default)
+    
+    # verify there are no publishers with stale codes to begin with
+    assert_equal Publisher.has_stale_uphold_code.count, 0
+
+    # verify scope includes publisher if uphold_code exist and exceeds timeout
+    publisher.uphold_code = "foo"
+    publisher.save
+    publisher.uphold_updated_at = Publisher::UPHOLD_CODE_TIMEOUT.ago - 1.minute
+    publisher.save
+    assert_equal Publisher.has_stale_uphold_code.count, 1
+
+    # verify scope does not include publisher if uphold_code exists and within timeout
+    publisher.uphold_code = "bar"
+    publisher.save    
+    assert_equal Publisher.has_stale_uphold_code.count, 0
+
+    # verify scope does not include publisher if uphold_code does not exist and within timeout
+    publisher.uphold_code = nil
+    publisher.save
+    assert_equal Publisher.has_stale_uphold_code.count, 0
+
+    # verify scope does not include publisher if uphold_code does not exist and exceeds timeout
+    publisher.uphold_code = nil
+    publisher.save!
+    publisher.uphold_updated_at = Publisher::UPHOLD_CODE_TIMEOUT.ago - 1.minute
+    publisher.save!
+    assert_equal Publisher.has_stale_uphold_code.count, 0
+  end
+
+  test "test `has_stale_access_params` scopes to correct publishers " do
+    publisher = publishers(:default)
+    
+    # verify there are no publishers with stale codes to begin with
+    assert_equal Publisher.has_stale_uphold_access_parameters.count, 0
+
+    # verify scope includes publisher if uphold_access_params exist and exceeds timeout
+    publisher.uphold_access_parameters = "foo"
+    publisher.save
+    publisher.uphold_updated_at = Publisher::UPHOLD_ACCESS_PARAMS_TIMEOUT.ago - 1.minute
+    publisher.save
+    assert_equal Publisher.has_stale_uphold_access_parameters.count, 1
+
+    # verify scope does not include publisher if uphold_access_params exists and within timeout
+    publisher.uphold_access_parameters = "bar"
+    publisher.save    
+    assert_equal Publisher.has_stale_uphold_access_parameters.count, 0
+
+    # verify scope does not include publisher if uphold_access_params does not exist and within timeout
+    publisher.uphold_access_parameters = nil
+    publisher.save
+    assert_equal Publisher.has_stale_uphold_access_parameters.count, 0
+
+    # verify scope does not include publisher if uphold_access_params does not exist and exceeds timeout
+    publisher.uphold_access_parameters = nil
+    publisher.save!
+    publisher.uphold_updated_at = Publisher::UPHOLD_CODE_TIMEOUT.ago - 1.minute
+    publisher.save!
+    assert_equal Publisher.has_stale_uphold_access_parameters.count, 0
+  end
+
+  test "test `before_validation :set_uphold_updated_at` updates correctly" do
+    publisher = publishers(:default)
+
+    # verify uphold_updated_at has been set after `uphold_state_token` updated
+    publisher.uphold_updated_at = 1.hour.ago
+    publisher.save
+    publisher.uphold_state_token = "foo"
+    publisher.save
+    assert publisher.uphold_updated_at > 30.minutes.ago
+
+    # verify uphold_updated_at has been set after `uphold_code` updated
+    publisher.uphold_updated_at = 1.hour.ago
+    publisher.save
+    publisher.uphold_code = "foo"
+    publisher.save
+    assert publisher.uphold_updated_at > 30.minutes.ago
+
+    # verify uphold_updated_at has been set after `uphold_access_parameters` updated
+    publisher.uphold_updated_at = 1.hour.ago
+    publisher.uphold_code = nil
+    publisher.save
+    publisher.uphold_access_parameters = "foo"
+    publisher.save
+    assert publisher.uphold_updated_at > 30.minutes.ago
   end
 end

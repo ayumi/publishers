@@ -14,7 +14,6 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
 
   PUBLISHER_PARAMS = {
     publisher: {
-      # email: "alice@example.com",
       brave_publisher_id: "pyramid.net",
       name: "Alice the Pyramid",
       phone: "+14159001420"
@@ -47,7 +46,60 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "access link logs the user in, and works only once" do
+  test "re-used access link is rejected" do
+    publisher = publishers(:completed)
+    url = publisher_url(publisher, token: publisher.authentication_token)
+ 
+    get url
+    assert_redirected_to home_publishers_url, "precond - publisher is logged in"
+
+    get url
+    assert_redirected_to root_url, "re-used URL is rejected, publisher not logged in"
+  end
+
+  test "can't create verified Publisher with an existing verified Publisher with the brave_publisher_id" do
+    perform_enqueued_jobs do
+      post(publishers_path, params: SIGNUP_PARAMS)
+    end
+    publisher = Publisher.order(created_at: :asc).last
+    url = publisher_url(publisher, token: publisher.authentication_token)
+    get(url)
+    follow_redirect!
+
+    update_params = {
+      publisher: {
+        brave_publisher_id_unnormalized: "verified.org",
+        name: "Alice the Pyramid",
+        phone: "+14159001420"
+      }
+    }
+
+    perform_enqueued_jobs do
+      patch(update_unverified_publishers_path, params: update_params)
+    end
+
+    assert_select('div.notifications') do |element|
+      assert_match("Another person has already verified that website", element.text)
+    end
+
+    # Now retry with a unique domain
+
+    update_params = {
+      publisher: {
+        brave_publisher_id_unnormalized: "this-one-is-unique.org",
+        name: "Alice the Pyramid",
+        phone: "+14159001420"
+      }
+    }
+
+    perform_enqueued_jobs do
+      patch(update_unverified_publishers_path, params: update_params)
+    end
+
+    assert_redirected_to verification_choose_method_publishers_path
+  end
+
+  test "a publisher's domain can be updated via an ajax patch" do
     perform_enqueued_jobs do
       post(publishers_path, params: SIGNUP_PARAMS)
     end
@@ -59,10 +111,115 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
       patch(update_unverified_publishers_path, params: PUBLISHER_PARAMS)
     end
 
-    # assert_select("[data-test-id='current_publisher']", publisher.to_s)
-    sign_out(:publisher)
-    get(url)
-    assert_empty(css_select("[data-test-id='current_publisher']"))
+    update_params = {
+      publisher: {
+        brave_publisher_id_unnormalized: "verified.org",
+        name: "Alice the Pyramid",
+        phone: "+14159001420"
+      }
+    }
+
+    url = update_unverified_publishers_path
+
+    perform_enqueued_jobs do
+      patch(url,
+            params: update_params,
+            headers: { 'HTTP_ACCEPT' => "application/json" })
+      assert_response 204
+    end
+
+    publisher.reload
+    assert_equal 'taken', publisher.brave_publisher_id_error_code
+    assert_nil publisher.brave_publisher_id
+    assert_nil publisher.brave_publisher_id_unnormalized
+
+    # Now retry with a unique domain
+
+    update_params = {
+      publisher: {
+        brave_publisher_id_unnormalized: "this-one-is-unique.org",
+        name: "Alice the Pyramid",
+        phone: "+14159001420"
+      }
+    }
+
+    url = update_unverified_publishers_path
+
+    perform_enqueued_jobs do
+      patch(url,
+            params: update_params,
+            headers: { 'HTTP_ACCEPT' => "application/json" })
+      assert_response 204
+    end
+
+    publisher.reload
+    assert_nil publisher.brave_publisher_id_error_code
+    assert_equal 'this-one-is-unique.org', publisher.brave_publisher_id
+    assert_nil publisher.brave_publisher_id_unnormalized
+  end
+
+  test "a publisher's domain can be rechecked for https support after an initial failure" do
+    prev_host_inspector_offline = Rails.application.secrets[:host_inspector_offline]
+    begin
+      Rails.application.secrets[:host_inspector_offline] = false
+
+      perform_enqueued_jobs do
+        post(publishers_path, params: SIGNUP_PARAMS)
+      end
+      publisher = Publisher.order(created_at: :asc).last
+      url = publisher_url(publisher, token: publisher.authentication_token)
+      get(url)
+      follow_redirect!
+      perform_enqueued_jobs do
+        patch(update_unverified_publishers_path, params: PUBLISHER_PARAMS)
+      end
+
+      publisher.verification_method = "public_file"
+      publisher.save
+
+      update_params = {
+        publisher: {
+          brave_publisher_id_unnormalized: "this-one-is-unique.org",
+          name: "Alice the Pyramid",
+          phone: "+14159001420"
+        }
+      }
+
+      stub_request(:get, "http://this-one-is-unique.org").
+        to_return(status: 200, body: "<html><body><h1>Welcome to mysite</h1></body></html>", headers: {})
+      stub_request(:get, "https://this-one-is-unique.org").
+        to_raise(Errno::ECONNREFUSED.new)
+      stub_request(:get, "https://www.this-one-is-unique.org").
+        to_raise(Errno::ECONNREFUSED.new)
+
+      perform_enqueued_jobs do
+        patch(update_unverified_publishers_path,
+              params: update_params,
+              headers: { 'HTTP_ACCEPT' => "application/json" })
+        assert_response 204
+      end
+
+      publisher.reload
+      assert_nil publisher.brave_publisher_id_error_code
+      assert_equal 'this-one-is-unique.org', publisher.brave_publisher_id
+      assert_nil publisher.brave_publisher_id_unnormalized
+      refute publisher.supports_https
+
+      stub_request(:get, "https://this-one-is-unique.org").
+        to_return(status: 200, body: "<html><body><h1>Welcome to mysite</h1></body></html>", headers: {})
+
+      perform_enqueued_jobs do
+        patch(check_for_https_publishers_path)
+        assert_response 302
+        assert_redirected_to '/publishers/verification_public_file'
+      end
+
+      publisher.reload
+      assert publisher.supports_https
+
+    ensure
+      Rails.application.secrets[:host_inspector_offline] = prev_host_inspector_offline
+    end
   end
 
   test "an unauthenticated html request redirects to home" do
@@ -94,16 +251,31 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     assert_email_body_matches(matcher: url, email: email)
   end
 
+  test "relogin normalizes domain prior to matching" do
+    publisher = publishers(:default)
+    perform_enqueued_jobs do
+      get(new_auth_token_publishers_path)
+      params = { publisher: { brave_publisher_id: "https://default.org", email: "alice@default.org" } }
+      post(create_auth_token_publishers_path, params: params)
+    end
+    email = ActionMailer::Base.deliveries.find do |message|
+      message.to.first == publisher.email
+    end
+    assert_not_nil(email)
+    url = publisher_url(publisher, token: publisher.reload.authentication_token)
+    assert_email_body_matches(matcher: url, email: email)
+  end
+
   test "relogin email works only once" do
     publisher = publishers(:default)
     request_login_email(publisher: publisher)
     url = publisher_url(publisher, token: publisher.reload.authentication_token)
     get(url)
     follow_redirect!
-    assert_select("[data-test-id='current_publisher']", publisher.to_s)
+    assert_select("div.publisher-domain-name", publisher.to_s)
     sign_out(:publisher)
     get(url)
-    assert_empty(css_select("[data-test-id='current_publisher']"))
+    assert_empty(css_select("div.publisher-domain-name"))
   end
 
   test "relogin for unverified publishers requires email" do
@@ -139,6 +311,74 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     assert_email_body_matches(matcher: url, email: email)
   end
 
+  test "publisher updating contact email address will trigger 3 emails and allow publishers confirm new address" do
+    perform_enqueued_jobs do
+      post(publishers_path, params: SIGNUP_PARAMS)
+    end
+    publisher = Publisher.order(created_at: :asc).last
+    url = publisher_url(publisher, token: publisher.authentication_token)
+    get(url)
+    follow_redirect!
+    perform_enqueued_jobs do
+      patch(update_unverified_publishers_path, params: PUBLISHER_PARAMS)
+    end
+
+    publisher.verified = true
+    publisher.save!
+
+    # verify two emails (one internal) have been sent
+    assert ActionMailer::Base.deliveries.count == 2
+
+    # update the publisher email
+    perform_enqueued_jobs do
+      patch(publishers_path,
+            params: { publisher: {pending_email: 'alice-pending@example.com' } },
+            headers: { 'HTTP_ACCEPT' => "application/json" })
+    end
+
+    publisher.reload
+
+    # verify pending email has been updated
+    assert_equal 'alice-pending@example.com', publisher.pending_email
+
+    # verify original email still is used
+    assert_equal 'alice@example.com', publisher.email
+
+    # verify 3 emails have been sent after update
+    assert ActionMailer::Base.deliveries.count == 5
+
+    # verify notification email sent to original address
+    email = ActionMailer::Base.deliveries.find do |message|
+      message.to == publisher.email
+      message.subject == I18n.t('publisher_mailer.notify_email_change.subject', publication_title: '')
+    end
+    assert_not_nil(email)
+
+    # verify brave gets an internal email copy of confirmation email
+    email = ActionMailer::Base.deliveries.find do |message|
+      message.to == Rails.application.secrets[:internal_email]
+      message.subject == "<Internal> #{I18n.t('publisher_mailer.confirm_email_change.subject', publication_title: '')}"
+    end
+    assert_not_nil(email)
+
+    # verify confirmation email sent to pending address
+    email = ActionMailer::Base.deliveries.find do |message|
+      message.to == publisher.pending_email
+      message.subject == I18n.t('publisher_mailer.confirm_email_change.subject', publication_title: '')
+    end
+    assert_not_nil(email)
+
+    url = publisher_url(publisher, confirm_email: publisher.pending_email, token: publisher.authentication_token)
+    get(url)
+    publisher.reload
+
+    # verify email changes after confirmation
+    assert_equal('alice-pending@example.com', publisher.email)
+
+    # verify pending email is removed after confirmation
+    assert_nil(publisher.pending_email)
+  end
+
   test "after verification, a publisher's `uphold_state_token` is set and will be used for Uphold authorization" do
     perform_enqueued_jobs do
       post(publishers_path, params: SIGNUP_PARAMS)
@@ -158,8 +398,8 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     # verify that the state token has not yet been set
     assert_nil(publisher.uphold_state_token)
 
-    # move right to `verification_done`
-    url = verification_done_publishers_url
+    # move right to `dashboard`
+    url = home_publishers_url
     get(url)
 
     # verify that a state token has been set
@@ -177,7 +417,7 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "after redirection back from uphold and uphold_api is offline a publisher's code is still set" do
+  test "after redirection back from uphold and uphold_api is offline, a publisher's code is still set" do
     begin
       perform_enqueued_jobs do
         post(publishers_path, params: SIGNUP_PARAMS)
@@ -222,7 +462,7 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "after redirection back from uphold and uphold_api is online a publisher's code is nil and uphold_access_parameters is set" do
+  test "after redirection back from uphold and uphold_api is online, a publisher's code is nil and uphold_access_parameters is set" do
     begin
       perform_enqueued_jobs do
         post(publishers_path, params: SIGNUP_PARAMS)
@@ -264,7 +504,7 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "after redirection back from uphold, a missing publisher's `uphold_state_token` redirects back to verification_done" do
+  test "after redirection back from uphold, a missing publisher's `uphold_state_token` redirects back to home" do
     perform_enqueued_jobs do
       post(publishers_path, params: SIGNUP_PARAMS)
     end
@@ -288,7 +528,7 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     assert_match(I18n.t('publishers.verification_uphold_state_token_does_not_match'), response.body)
   end
 
-  test "after redirection back from uphold, a mismatched publisher's `uphold_state_token` redirects back to verification_done" do
+  test "after redirection back from uphold, a mismatched publisher's `uphold_state_token` redirects back to home" do
     perform_enqueued_jobs do
       post(publishers_path, params: SIGNUP_PARAMS)
     end
@@ -346,6 +586,42 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     assert_equal 'Joseph Blow', publisher.name
   end
 
+  test "a publisher's domain status can be polled via ajax" do
+    perform_enqueued_jobs do
+      post(publishers_path, params: SIGNUP_PARAMS)
+    end
+    publisher = Publisher.order(created_at: :asc).last
+    url = publisher_url(publisher, token: publisher.authentication_token)
+    get(url)
+    follow_redirect!
+
+    url = domain_status_publishers_path
+
+    # domain has not been set yet
+    get(url, headers: { 'HTTP_ACCEPT' => "application/json" })
+    assert_response 404
+
+    update_params = {
+      publisher: {
+        brave_publisher_id_unnormalized: "pyramid.net",
+        name: "Alice the Pyramid",
+        phone: "+14159001420"
+      }
+    }
+
+    perform_enqueued_jobs do
+      patch(update_unverified_publishers_path, params: update_params )
+    end
+
+    # domain has been set
+    get(url, headers: { 'HTTP_ACCEPT' => "application/json" })
+    assert_response 200
+    assert_match(
+      '{"brave_publisher_id":"pyramid.net",' +
+       '"next_step":"/publishers/verification_choose_method"}',
+      response.body)
+  end
+
   test "a publisher's statement can be generated via ajax" do
     perform_enqueued_jobs do
       post(publishers_path, params: SIGNUP_PARAMS)
@@ -369,10 +645,17 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
           params: { statement_period: 'all' },
           headers: { 'HTTP_ACCEPT' => "application/json" })
 
+    publisher_statement = PublisherStatement.order(created_at: :asc).last
+
     assert_response 200
-    assert_match("{\"reportURL\":\"/publishers/home\"}", response.body)
+    assert_match(
+      '{"id":"' + publisher_statement.id + '",' +
+        '"date":"' + publisher_statement.created_at.strftime('%B %e, %Y') + '",' +
+        '"period":"All"}',
+      response.body)
+    # assert_match("{\"id\":\"#{publisher_statement.id}\"}", response.body)
   end
-  
+
   test "a publisher's status can be polled via ajax" do
     perform_enqueued_jobs do
       post(publishers_path, params: SIGNUP_PARAMS)
@@ -398,9 +681,27 @@ class PublishersControllerTest < ActionDispatch::IntegrationTest
     assert_response 200
     assert_match(
       '{"status":"uphold_unconnected",' +
-       '"status_description":"Wallet not found, please Connect with Uphold to create one",' +
+       '"status_description":"You need to create a wallet with Uphold to receive contributions from Brave Payments.",' +
+       '"timeout_message":null,' +
        '"uphold_status":"unconnected",' +
        '"uphold_status_description":"Not connected to Uphold."}',
       response.body)
+  end
+
+  test "a publisher's balance can be polled via ajax" do
+    publisher = publishers(:uphold_connected)
+    request_login_email(publisher: publisher)
+    url = publisher_url(publisher, token: publisher.reload.authentication_token)
+    get(url)
+    follow_redirect!
+
+    url = balance_publishers_path
+    get(url,
+        headers: { 'HTTP_ACCEPT' => "application/json" })
+
+    assert_response 200
+    assert_equal(
+        '{"bat_amount":"38077.50","converted_balance":"Approximately 9001.00 USD"}',
+        response.body)
   end
 end

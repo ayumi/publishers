@@ -6,14 +6,8 @@ class PublisherMailerPreview < ActionMailer::Preview
     PublisherMailer.login_email(Publisher.first)
   end
 
-  # TODO: Remove me. Deprecated.
-  def verification_deprecated
-    PublisherMailer.verification(Publisher.first)
-  end
-
-  # TODO: Remove me. Deprecated.
-  def verification_internal_deprecated
-    PublisherMailer.verification_internal(Publisher.first)
+  def verify_email
+    PublisherMailer.verify_email(Publisher.first)
   end
 
   def verification_done
@@ -34,5 +28,13 @@ class PublisherMailerPreview < ActionMailer::Preview
 
   def uphold_account_changed
     PublisherMailer.uphold_account_changed(Publisher.first)
+  end
+
+  def verified_no_wallet
+    PublisherMailer.verified_no_wallet(Publisher.first, nil)
+  end
+
+  def verified_no_wallet_internal
+    PublisherMailer.verified_no_wallet(Publisher.first, nil)
   end
 end

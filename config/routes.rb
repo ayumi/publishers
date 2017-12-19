@@ -11,21 +11,31 @@ Rails.application.routes.draw do
       get :email_verified
       get :verification_choose_method
       get :verification_dns_record
-      get :verification_done
       get :verification_public_file
       get :verification_github
       get :verification_wordpress
       get :verification_support_queue
       get :status
+      get :balance
       get :uphold_verified
+      get :statement
+      get :statement_ready
+      get :contact_info
+      get :domain_status
       patch :verify
       patch :check_for_https
       patch :update
       patch :generate_statement
       patch :update_unverified
+      resources :two_factor_authentications, only: %i(index)
+      resources :two_factor_registrations, only: %i(index)
+      resources :u2f_registrations, only: %i(new create destroy)
+      resources :u2f_authentications, only: %i(create)
+      resources :totp_registrations, only: %i(new create destroy)
+      resources :totp_authentications, only: %i(create)
     end
   end
-  devise_for :publishers
+  devise_for :publishers, only: :omniauth_callbacks, controllers: { omniauth_callbacks: "publishers/omniauth_callbacks" }
 
   resources :static, only: [] do
     collection do
